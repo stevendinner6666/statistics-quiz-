@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>統計學題庫練習</title>
+<style>
+body{font-family:Arial,"Microsoft JhengHei",sans-serif;background:#f2f4fa;color:#202944;margin:0}
+header{background:#202d50;color:white;padding:25px;text-align:center}
+main{max-width:800px;margin:25px auto;padding:15px}
+.card{background:white;padding:22px;border-radius:16px;margin-bottom:18px;box-shadow:0 3px 15px #0001}
+button,select{padding:12px;border:0;border-radius:9px;margin:5px;cursor:pointer;font-size:15px}
+button{background:#465bd8;color:white}
+.option{display:block;width:100%;text-align:left;background:#f1f3fa;color:#202944;margin:10px 0}
+.option.selected{background:#dce3ff;border:2px solid #465bd8}
+.correct{background:#d8f5e6!important}
+.wrong{background:#ffe0e3!important}
+.muted{color:#788198}
+#feedback{padding:15px;background:#f0f3fa;border-radius:10px;margin-top:15px}
+.hidden{display:none}
+textarea{width:100%;height:120px;box-sizing:border-box}
+</style>
+</head>
+<body>
+
+<header>
+<h1>📚 統計學題庫練習系統</h1>
+<p>隨機測驗・即時批改・錯題複習</p>
+</header>
+
+<main>
+
+<div class="card" id="home">
+<h2>開始練習</h2>
+<p id="info">目前尚未匯入題庫</p>
+
+<label>測驗範圍：</label>
+<select id="chapter">
+<option value="all">全部章節</option>
+</select>
+
+<label>題目數量：</label>
+<select id="amount">
+<option value="10">10 題</option>
+<option value="20">20 題</option>
+<option value="30">30 題</option>
+<option value="all">全部題目</option>
+</select>
+
+<br>
+<button onclick="start()">開始測驗</button>
+<button onclick="start(true)">錯題練習</button>
+<button onclick="clearWrong()">清除錯題</button>
+</div>
+
+<div class="card">
+<h3>📊 練習統計</h3>
+<p>累計作答：<b id="total">0</b></p>
+<p>累計答對：<b id="correct">0</b></p>
+<p>正確率：<b id="rate">0%</b></p>
+</div>
+
+<div class="card hidden" id="quiz">
+<p id="progress"></p>
+<h3 id="question"></h3>
+<div id="options"></div>
+<div id="feedback" class="hidden"></div>
+<br>
+<button onclick="check()">確認答案</button>
+<button onclick="next()">下一題</button>
+<button onclick="finish()">交卷</button>
+</div>
+
+<div class="card hidden" id="result">
+<h2>測驗結果</h2>
+<h3 id="score"></h3>
+<div id="review"></div>
+<button onclick="location.reload()">回首頁</button>
+</div>
+
+<div class="card">
+<h3>📥 匯入題庫</h3>
+<p class="muted">請選擇 JSON 格式的題庫檔案。</p>
+<input type="file" id="file" accept=".json">
+<br>
+<button onclick="importBank()">匯入題庫</button>
+</div>
+
+</main>
+
+<script>
+let bank=JSON.parse(localStorage.getItem("bank")||"[]");
+let wrong=JSON.parse(localStorage.getItem("wrong")||"[]");
+let total=Number(localStorage.getItem("total")||0);
+let correct=Number(localStorage.getItem("correct")||0);
+
+let questions=[],index=0,answers={},done={};
+
+function update(){
+ document.getElementById("info").textContent="目前共有 "+bank.length+" 題";
+ document.getElementById("total").textContent=total;
+ document.getElementById("correct").textContent=correct;
+ document.getElementById("rate").textContent=total?Math.round(correct/total*100)+"%":"0%";
+ let chapters=[...new Set(bank.map(q=>q.chapter||"未分類"))];
+ document.getElementById("chapter").innerHTML='<option value="all">全部章節</option>'+chapters.map(c=>`<option>${c}</option>`).join("");
+}
+
+function start(onlyWrong=false){
+ let selected=bank.filter(q=>
+ (!onlyWrong||wrong.includes(String(q.id)))&&
+ (document.getElementById("chapter").value==="all"||
+ q.chapter===document.getElementById("chapter").value)
+ );
+ if(!selected.length){alert("沒有可練習的題目，請先匯入題庫！");return;}
+ selected.sort(()=>Math.random()-.5);
+ let n=document.getElementById("amount").value;
+ questions=selected.slice(0,n==="all"?selected.length:Number(n));
+ index=0;answers={};done={};
+ document.getElementById("home").classList.add("hidden");
+ document.getElementById("quiz").classList.remove("hidden");
+ document.getElementById("result").classList.add("hidden");
+ show();
+}
+
+function show(){
+ let q=questions[index];
+ document.getElementById("progress").textContent=`第 ${index+1} 題 / 共 ${questions.length} 題`;
+ document.getElementById("question").textContent=q.question;
+ document.getElementById("options").innerHTML="";
+ for(let [key,value] of Object.entries(q.options)){
+  let b=document.createElement("button");
+  b.className="option"+(answers[q.id]===key?" selected":"");
+  b.textContent=key+". "+value;
+  b.onclick=()=>{if(done[q.id])return;answers[q.id]=key;show();};
+  document.getElementById("options").appendChild(b);
+ }
+ document.getElementById("feedback").classList.add("hidden");
+ if(done[q.id])showFeedback(q);
+}
+
+function check(){
+ let q=questions[index];
+ if(!answers[q.id]){alert("請先選擇答案！");return;}
+ if(done[q.id])return;
+ done[q.id]=true;
+ total++;
+ let ok=answers[q.id]===q.answer;
+ if(ok){correct++;wrong=wrong.filter(x=>x!==String(q.id));}
+ else if(!wrong.includes(String(q.id)))wrong.push(String(q.id));
+ save();
+ showFeedback(q);
+ update();
+}
+
+function showFeedback(q){
+ let ok=answers[q.id]===q.answer;
+ let f=document.getElementById("feedback");
+ f.classList.remove("hidden");
+ f.innerHTML=`<b>${ok?"答對了！":"答錯了！正確答案："+q.answer}</b><p>${q.explanation||"暫無解析"}</p>`;
+}
+
+function next(){
+ if(index<questions.length-1){index++;show();}
+ else finish();
+}
+
+function finish(){
+ let right=questions.filter(q=>answers[q.id]===q.answer).length;
+ document.getElementById("quiz").classList.add("hidden");
+ document.getElementById("result").classList.remove("hidden");
+ document.getElementById("score").textContent=`答對 ${right} 題，答錯 ${questions.length-right} 題，正確率 ${Math.round(right/questions.length*100)}%`;
+ document.getElementById("review").innerHTML=questions.map((q,i)=>`
+ <hr><p><b>${i+1}. ${q.question}</b></p>
+ <p>你的答案：${answers[q.id]||"未作答"}｜正確答案：${q.answer}</p>
+ <p>${q.explanation||"暫無解析"}</p>`).join("");
+}
+
+function save(){
+ localStorage.setItem("bank",JSON.stringify(bank));
+ localStorage.setItem("wrong",JSON.stringify(wrong));
+ localStorage.setItem("total",total);
+ localStorage.setItem("correct",correct);
+}
+
+function clearWrong(){
+ if(confirm("確定清除錯題紀錄？")){
+ wrong=[];save();alert("已清除！");
+ }
+}
+
+async function importBank(){
+ let file=document.getElementById("file").files[0];
+ if(!file){alert("請先選擇題庫檔案！");return;}
+ try{
+  let data=JSON.parse(await file.text());
+  if(!Array.isArray(data))throw Error("題庫格式必須是陣列");
+  data.forEach((q,i)=>{
+   if(!q.question||!q.options||!q.answer||!(q.answer in q.options))
+    throw Error("第 "+(i+1)+" 題資料不完整");
+   q.id=String(q.id??i+1);
+  });
+  bank=data;save();update();
+  alert("成功匯入 "+bank.length+" 題！");
+ }catch(e){alert("匯入失敗："+e.message);}
+}
+
+update();
+</script>
+</body>
+</html>
