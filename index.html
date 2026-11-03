@@ -4,28 +4,36 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>統計學題庫練習</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
 <style>
+*{box-sizing:border-box}
 body{font-family:Arial,"Microsoft JhengHei",sans-serif;background:#f2f4fa;color:#202944;margin:0}
 header{background:#202d50;color:white;padding:25px;text-align:center}
-main{max-width:800px;margin:25px auto;padding:15px}
+main{max-width:850px;margin:25px auto;padding:15px}
 .card{background:white;padding:22px;border-radius:16px;margin-bottom:18px;box-shadow:0 3px 15px #0001}
 button,select{padding:12px;border:0;border-radius:9px;margin:5px;cursor:pointer;font-size:15px}
 button{background:#465bd8;color:white}
+button:disabled{opacity:.5;cursor:not-allowed}
 .option{display:block;width:100%;text-align:left;background:#f1f3fa;color:#202944;margin:10px 0}
 .option.selected{background:#dce3ff;border:2px solid #465bd8}
 .correct{background:#d8f5e6!important}
 .wrong{background:#ffe0e3!important}
 .muted{color:#788198}
-#feedback{padding:15px;background:#f0f3fa;border-radius:10px;margin-top:15px}
 .hidden{display:none}
-textarea{width:100%;height:120px;box-sizing:border-box}
+#feedback{padding:15px;background:#f0f3fa;border-radius:10px;margin-top:15px}
+input[type=file]{max-width:100%;margin:10px 0}
+.notice{padding:12px;background:#f0f3fa;border-radius:9px;margin:12px 0}
+#preview{max-height:300px;overflow:auto}
+#preview li{margin:7px 0}
 </style>
 </head>
-<body>
 
+<body>
 <header>
 <h1>📚 統計學題庫練習系統</h1>
-<p>隨機測驗・即時批改・錯題複習</p>
+<p>隨機測驗・即時批改・錯題複習・PDF 匯入</p>
 </header>
 
 <main>
@@ -46,7 +54,6 @@ textarea{width:100%;height:120px;box-sizing:border-box}
 <option value="30">30 題</option>
 <option value="all">全部題目</option>
 </select>
-
 <br>
 <button onclick="start()">開始測驗</button>
 <button onclick="start(true)">錯題練習</button>
@@ -75,133 +82,476 @@ textarea{width:100%;height:120px;box-sizing:border-box}
 <h2>測驗結果</h2>
 <h3 id="score"></h3>
 <div id="review"></div>
-<button onclick="location.reload()">回首頁</button>
+<button onclick="goHome()">回首頁</button>
 </div>
 
 <div class="card">
-<h3>📥 匯入題庫</h3>
-<p class="muted">請選擇 JSON 格式的題庫檔案。</p>
-<input type="file" id="file" accept=".json">
+<h3>📥 匯入 PDF 題庫</h3>
+<p class="muted">選擇包含題目、選項及 ANSWER 答案的 PDF 檔案。</p>
+<input type="file" id="pdfFile" accept=".pdf,application/pdf">
 <br>
-<button onclick="importBank()">匯入題庫</button>
+<button id="pdfButton" onclick="readPDF()">讀取 PDF</button>
+<div id="pdfStatus" class="notice hidden"></div>
+<div id="preview" class="hidden"></div>
+<button id="confirmPDF" class="hidden" onclick="confirmPDFImport()">確認匯入辨識結果</button>
+</div>
+
+<div class="card">
+<h3>📄 匯入 JSON 題庫</h3>
+<p class="muted">原本的 JSON 匯入功能仍然保留。</p>
+<input type="file" id="jsonFile" accept=".json">
+<br>
+<button onclick="importJSON()">匯入 JSON</button>
 </div>
 
 </main>
 
 <script>
+if(window.pdfjsLib){
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+}
+
 let bank=JSON.parse(localStorage.getItem("bank")||"[]");
 let wrong=JSON.parse(localStorage.getItem("wrong")||"[]");
 let total=Number(localStorage.getItem("total")||0);
 let correct=Number(localStorage.getItem("correct")||0);
 
 let questions=[],index=0,answers={},done={};
+let pendingPDFQuestions=[];
+
+function save(){
+  localStorage.setItem("bank",JSON.stringify(bank));
+  localStorage.setItem("wrong",JSON.stringify(wrong));
+  localStorage.setItem("total",total);
+  localStorage.setItem("correct",correct);
+}
 
 function update(){
- document.getElementById("info").textContent="目前共有 "+bank.length+" 題";
- document.getElementById("total").textContent=total;
- document.getElementById("correct").textContent=correct;
- document.getElementById("rate").textContent=total?Math.round(correct/total*100)+"%":"0%";
- let chapters=[...new Set(bank.map(q=>q.chapter||"未分類"))];
- document.getElementById("chapter").innerHTML='<option value="all">全部章節</option>'+chapters.map(c=>`<option>${c}</option>`).join("");
+  document.getElementById("info").textContent="目前共有 "+bank.length+" 題";
+  document.getElementById("total").textContent=total;
+  document.getElementById("correct").textContent=correct;
+  document.getElementById("rate").textContent=
+    total?Math.round(correct/total*100)+"%":"0%";
+
+  let chapters=[...new Set(bank.map(q=>q.chapter||"未分類"))];
+  document.getElementById("chapter").innerHTML=
+    '<option value="all">全部章節</option>'+
+    chapters.map(c=>`<option value="${escapeHTML(c)}">${escapeHTML(c)}</option>`).join("");
+}
+
+function escapeHTML(value){
+  return String(value).replace(/[&<>"']/g,c=>({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  })[c]);
 }
 
 function start(onlyWrong=false){
- let selected=bank.filter(q=>
- (!onlyWrong||wrong.includes(String(q.id)))&&
- (document.getElementById("chapter").value==="all"||
- q.chapter===document.getElementById("chapter").value)
- );
- if(!selected.length){alert("沒有可練習的題目，請先匯入題庫！");return;}
- selected.sort(()=>Math.random()-.5);
- let n=document.getElementById("amount").value;
- questions=selected.slice(0,n==="all"?selected.length:Number(n));
- index=0;answers={};done={};
- document.getElementById("home").classList.add("hidden");
- document.getElementById("quiz").classList.remove("hidden");
- document.getElementById("result").classList.add("hidden");
- show();
+  let selected=bank.filter(q=>
+    (!onlyWrong||wrong.includes(String(q.id)))&&
+    (document.getElementById("chapter").value==="all"||
+    q.chapter===document.getElementById("chapter").value)
+  );
+
+  if(!selected.length){
+    alert("沒有可練習的題目，請先匯入題庫！");
+    return;
+  }
+
+  selected.sort(()=>Math.random()-.5);
+  let n=document.getElementById("amount").value;
+  questions=selected.slice(0,n==="all"?selected.length:Number(n));
+
+  index=0;
+  answers={};
+  done={};
+
+  document.getElementById("home").classList.add("hidden");
+  document.getElementById("quiz").classList.remove("hidden");
+  document.getElementById("result").classList.add("hidden");
+  show();
 }
 
 function show(){
- let q=questions[index];
- document.getElementById("progress").textContent=`第 ${index+1} 題 / 共 ${questions.length} 題`;
- document.getElementById("question").textContent=q.question;
- document.getElementById("options").innerHTML="";
- for(let [key,value] of Object.entries(q.options)){
-  let b=document.createElement("button");
-  b.className="option"+(answers[q.id]===key?" selected":"");
-  b.textContent=key+". "+value;
-  b.onclick=()=>{if(done[q.id])return;answers[q.id]=key;show();};
-  document.getElementById("options").appendChild(b);
- }
- document.getElementById("feedback").classList.add("hidden");
- if(done[q.id])showFeedback(q);
+  let q=questions[index];
+
+  document.getElementById("progress").textContent=
+    `第 ${index+1} 題 / 共 ${questions.length} 題`;
+
+  document.getElementById("question").textContent=q.question;
+  document.getElementById("options").innerHTML="";
+
+  for(let [key,value] of Object.entries(q.options)){
+    let b=document.createElement("button");
+    b.className="option"+(answers[q.id]===key?" selected":"");
+    b.textContent=key+". "+value;
+    b.disabled=!!done[q.id];
+    b.onclick=()=>{
+      if(done[q.id])return;
+      answers[q.id]=key;
+      show();
+    };
+    document.getElementById("options").appendChild(b);
+  }
+
+  document.getElementById("feedback").classList.add("hidden");
+  if(done[q.id])showFeedback(q);
 }
 
 function check(){
- let q=questions[index];
- if(!answers[q.id]){alert("請先選擇答案！");return;}
- if(done[q.id])return;
- done[q.id]=true;
- total++;
- let ok=answers[q.id]===q.answer;
- if(ok){correct++;wrong=wrong.filter(x=>x!==String(q.id));}
- else if(!wrong.includes(String(q.id)))wrong.push(String(q.id));
- save();
- showFeedback(q);
- update();
+  let q=questions[index];
+
+  if(!answers[q.id]){
+    alert("請先選擇答案！");
+    return;
+  }
+  if(done[q.id])return;
+
+  done[q.id]=true;
+  total++;
+
+  let ok=answers[q.id]===q.answer;
+
+  if(ok){
+    correct++;
+    wrong=wrong.filter(x=>x!==String(q.id));
+  }else if(!wrong.includes(String(q.id))){
+    wrong.push(String(q.id));
+  }
+
+  save();
+  show();
+  showFeedback(q);
+  update();
 }
 
 function showFeedback(q){
- let ok=answers[q.id]===q.answer;
- let f=document.getElementById("feedback");
- f.classList.remove("hidden");
- f.innerHTML=`<b>${ok?"答對了！":"答錯了！正確答案："+q.answer}</b><p>${q.explanation||"暫無解析"}</p>`;
+  let ok=answers[q.id]===q.answer;
+  let f=document.getElementById("feedback");
+
+  f.classList.remove("hidden");
+  f.innerHTML=
+    `<b>${ok?"答對了！":"答錯了！正確答案："+escapeHTML(q.answer)}</b>
+    <p>${escapeHTML(q.explanation||"暫無解析")}</p>`;
 }
 
 function next(){
- if(index<questions.length-1){index++;show();}
- else finish();
+  if(index<questions.length-1){
+    index++;
+    show();
+  }else{
+    finish();
+  }
 }
 
 function finish(){
- let right=questions.filter(q=>answers[q.id]===q.answer).length;
- document.getElementById("quiz").classList.add("hidden");
- document.getElementById("result").classList.remove("hidden");
- document.getElementById("score").textContent=`答對 ${right} 題，答錯 ${questions.length-right} 題，正確率 ${Math.round(right/questions.length*100)}%`;
- document.getElementById("review").innerHTML=questions.map((q,i)=>`
- <hr><p><b>${i+1}. ${q.question}</b></p>
- <p>你的答案：${answers[q.id]||"未作答"}｜正確答案：${q.answer}</p>
- <p>${q.explanation||"暫無解析"}</p>`).join("");
+  let right=questions.filter(q=>answers[q.id]===q.answer).length;
+
+  document.getElementById("quiz").classList.add("hidden");
+  document.getElementById("result").classList.remove("hidden");
+
+  document.getElementById("score").textContent=
+    `答對 ${right} 題，答錯 ${questions.length-right} 題，正確率 ${Math.round(right/questions.length*100)}%`;
+
+  document.getElementById("review").innerHTML=questions.map((q,i)=>`
+    <hr>
+    <p><b>${i+1}. ${escapeHTML(q.question)}</b></p>
+    <p>你的答案：${escapeHTML(answers[q.id]||"未作答")}｜正確答案：${escapeHTML(q.answer)}</p>
+    <p>${escapeHTML(q.explanation||"暫無解析")}</p>
+  `).join("");
 }
 
-function save(){
- localStorage.setItem("bank",JSON.stringify(bank));
- localStorage.setItem("wrong",JSON.stringify(wrong));
- localStorage.setItem("total",total);
- localStorage.setItem("correct",correct);
+function goHome(){
+  document.getElementById("result").classList.add("hidden");
+  document.getElementById("home").classList.remove("hidden");
 }
 
 function clearWrong(){
- if(confirm("確定清除錯題紀錄？")){
- wrong=[];save();alert("已清除！");
- }
+  if(confirm("確定清除錯題紀錄？")){
+    wrong=[];
+    save();
+    alert("已清除！");
+  }
 }
 
-async function importBank(){
- let file=document.getElementById("file").files[0];
- if(!file){alert("請先選擇題庫檔案！");return;}
- try{
-  let data=JSON.parse(await file.text());
-  if(!Array.isArray(data))throw Error("題庫格式必須是陣列");
-  data.forEach((q,i)=>{
-   if(!q.question||!q.options||!q.answer||!(q.answer in q.options))
-    throw Error("第 "+(i+1)+" 題資料不完整");
-   q.id=String(q.id??i+1);
+function importJSON(){
+  let file=document.getElementById("jsonFile").files[0];
+  if(!file){
+    alert("請先選擇 JSON 檔案！");
+    return;
+  }
+
+  file.text().then(text=>{
+    let data=JSON.parse(text);
+    if(!Array.isArray(data))throw Error("題庫格式必須是陣列");
+
+    data.forEach((q,i)=>{
+      if(!q.question||!q.options||!q.answer||!(q.answer in q.options)){
+        throw Error("第 "+(i+1)+" 題資料不完整");
+      }
+      q.id=String(q.id??i+1);
+    });
+
+    bank=data;
+    save();
+    update();
+    alert("成功匯入 "+bank.length+" 題！");
+  }).catch(e=>{
+    alert("匯入失敗："+e.message);
   });
-  bank=data;save();update();
+}
+
+/* PDF 文字擷取：依照頁面座標整理成文字行 */
+async function extractPDFLines(file){
+  if(!window.pdfjsLib){
+    throw new Error("PDF 讀取程式載入失敗，請重新整理網頁後再試。");
+  }
+
+  let buffer=await file.arrayBuffer();
+  let pdf=await pdfjsLib.getDocument({
+    data:new Uint8Array(buffer)
+  }).promise;
+
+  let allLines=[];
+
+  for(let pageNo=1;pageNo<=pdf.numPages;pageNo++){
+    let page=await pdf.getPage(pageNo);
+    let content=await page.getTextContent();
+    let rows=[];
+
+    for(let item of content.items){
+      if(!item.str||!item.str.trim())continue;
+
+      let y=Math.round(item.transform[5]);
+      let x=item.transform[4];
+
+      let row=rows.find(r=>Math.abs(r.y-y)<=2);
+
+      if(!row){
+        row={y:y,items:[]};
+        rows.push(row);
+      }
+
+      row.items.push({x:x,text:item.str.trim()});
+    }
+
+    rows.sort((a,b)=>b.y-a.y);
+
+    for(let row of rows){
+      row.items.sort((a,b)=>a.x-b.x);
+      let line=row.items.map(x=>x.text).join(" ").trim();
+      if(line)allLines.push(line);
+    }
+  }
+
+  return allLines;
+}
+
+/* 將題目、選項與 ANSWER 組合成題庫格式 */
+function parseQuestions(lines){
+  let parsed={};
+  let current=null;
+  let currentOption=null;
+
+  function addText(target,text){
+    if(!text)return;
+    if(target==="question"){
+      current.question+=" "+text;
+    }else if(target){
+      current.options[target]+=" "+text;
+    }
+  }
+
+  for(let original of lines){
+    let line=original.replace(/\s+/g," ").trim();
+    if(!line)continue;
+
+    line=line.replace(/^ANSWER\s*:\s*/i,"ANSWER: ");
+
+    // 擷取答案，即使答案與選項出現在同一行
+    let answerMatch=line.match(/ANSWER\s*:\s*([a-d])\b/i);
+    if(answerMatch&&current){
+      current.answer=answerMatch[1].toLowerCase();
+      line=line.replace(/ANSWER\s*:\s*[a-d]\b/i,"").trim();
+    }
+
+    // 跳過 PDF 頁首頁尾
+    if(/^(Name:|Class:|Date:|Copyright Cengage|Powered by Cognero|Page \d+|Multiple Choice)/i.test(line)){
+      continue;
+    }
+
+    // 新題目，例如 1. Question text
+    let qMatch=line.match(/^(\d{1,3})\.\s*(.*)$/);
+
+    if(qMatch){
+      let number=Number(qMatch[1]);
+
+      if(number>=1&&number<=84){
+        current=parsed[number]||{
+          number:number,
+          question:"",
+          options:{a:"",b:"",c:"",d:""},
+          answer:""
+        };
+        parsed[number]=current;
+        currentOption=null;
+        addText("question",qMatch[2]);
+      }else{
+        current=null;
+        currentOption=null;
+      }
+      continue;
+    }
+
+    if(!current)continue;
+
+    // 選項，例如 a. xxx
+    let optionMatch=line.match(/^([a-d])\.\s*(.*)$/i);
+
+    if(optionMatch){
+      currentOption=optionMatch[1].toLowerCase();
+      current.options[currentOption]=optionMatch[2].trim();
+      continue;
+    }
+
+    // 其他文字視為上一行題目或選項的延續
+    if(currentOption){
+      addText(currentOption,line);
+    }else{
+      addText("question",line);
+    }
+  }
+
+  let result=[];
+  let problems=[];
+
+  for(let i=1;i<=84;i++){
+    let q=parsed[i];
+
+    if(!q){
+      problems.push("第 "+i+" 題未辨識");
+      continue;
+    }
+
+    q.question=q.question.trim();
+
+    for(let key of ["a","b","c","d"]){
+      q.options[key]=q.options[key].trim();
+    }
+
+    let missing=Object.keys(q.options).filter(k=>!q.options[k]);
+
+    if(!q.question||missing.length||!q.answer||!(q.answer in q.options)){
+      problems.push(
+        "第 "+i+" 題資料不完整"+
+        (missing.length?"（缺少選項 "+missing.join(",")+"）":"")+
+        (!q.answer?"（缺少答案）":"")
+      );
+      continue;
+    }
+
+    result.push({
+      id:"ch1-"+i,
+      chapter:"Ch. 01: Data and Statistics",
+      question:q.question,
+      options:q.options,
+      answer:q.answer,
+      explanation:"暫無解析"
+    });
+  }
+
+  return {questions:result,problems:problems};
+}
+
+/* 選擇 PDF 並顯示辨識預覽 */
+async function readPDF(){
+  let file=document.getElementById("pdfFile").files[0];
+
+  if(!file){
+    alert("請先選擇 PDF 檔案！");
+    return;
+  }
+
+  let button=document.getElementById("pdfButton");
+  let status=document.getElementById("pdfStatus");
+  let preview=document.getElementById("preview");
+  let confirmButton=document.getElementById("confirmPDF");
+
+  button.disabled=true;
+  button.textContent="讀取中...";
+  status.classList.remove("hidden");
+  preview.classList.add("hidden");
+  confirmButton.classList.add("hidden");
+  pendingPDFQuestions=[];
+
+  try{
+    let lines=await extractPDFLines(file);
+    let result=parseQuestions(lines);
+
+    pendingPDFQuestions=result.questions;
+
+    status.innerHTML=
+      `PDF 讀取完成！<br>
+      成功辨識：<b>${result.questions.length} 題</b><br>
+      預計選擇題：84 題<br>
+      尚未支援的簡答題：13 題`;
+
+    if(result.problems.length){
+      status.innerHTML+=
+        `<p>以下題目尚未完整辨識，暫時不會匯入：</p>
+        <ul>${result.problems.map(x=>`<li>${escapeHTML(x)}</li>`).join("")}</ul>`;
+    }
+
+    preview.classList.remove("hidden");
+    preview.innerHTML="<h4>辨識結果預覽</h4><ol>"+
+      result.questions.slice(0,10).map(q=>
+        `<li><b>${escapeHTML(q.question)}</b><br>
+        A. ${escapeHTML(q.options.a)}<br>
+        B. ${escapeHTML(q.options.b)}<br>
+        C. ${escapeHTML(q.options.c)}<br>
+        D. ${escapeHTML(q.options.d)}<br>
+        正確答案：${escapeHTML(q.answer.toUpperCase())}</li>`
+      ).join("")+"</ol>"+
+      (result.questions.length>10?"<p>以上僅顯示前 10 題。</p>":"");
+
+    if(result.questions.length){
+      confirmButton.classList.remove("hidden");
+      confirmButton.textContent="確認匯入 "+result.questions.length+" 題";
+    }else{
+      status.innerHTML+="<p>沒有辨識到可匯入的完整題目，請檢查 PDF 格式。</p>";
+    }
+
+  }catch(error){
+    status.textContent="PDF 讀取失敗："+error.message;
+  }finally{
+    button.disabled=false;
+    button.textContent="讀取 PDF";
+  }
+}
+
+/* 確認後才正式寫入題庫 */
+function confirmPDFImport(){
+  if(!pendingPDFQuestions.length){
+    alert("目前沒有可匯入的題目！");
+    return;
+  }
+
+  if(!confirm(
+    "確定匯入 "+pendingPDFQuestions.length+
+    " 題嗎？這會取代目前的題庫，但不會清除累計統計。"
+  )){
+    return;
+  }
+
+  bank=pendingPDFQuestions;
+  wrong=wrong.filter(id=>bank.some(q=>String(q.id)===id));
+
+  save();
+  update();
+
   alert("成功匯入 "+bank.length+" 題！");
- }catch(e){alert("匯入失敗："+e.message);}
+  document.getElementById("preview").classList.add("hidden");
+  document.getElementById("confirmPDF").classList.add("hidden");
 }
 
 update();
