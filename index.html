@@ -1,10 +1,10 @@
+
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>統計學題庫練習</title>
-
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
 <style>
@@ -25,13 +25,14 @@ button:disabled{opacity:.5;cursor:not-allowed}
 input[type=file]{max-width:100%;margin:10px 0}
 #preview{max-height:450px;overflow:auto}
 #preview li{margin:12px 0;line-height:1.6}
-.correct{background:#d8f5e6!important}
-.wrong{background:#ffe0e3!important}
+.review-item{padding:16px;border-radius:12px;margin:15px 0;border:1px solid #ddd}
+.review-correct{background:#e2f7eb;border:1px solid #8bd5a8}
+.review-wrong{background:#ffe3e5;border:1px solid #f09aa2}
+.review-status{font-weight:bold;margin-bottom:10px}
 </style>
 </head>
 
 <body>
-
 <header>
 <h1>📚 統計學題庫練習系統</h1>
 <p>隨機測驗・即時批改・錯題複習・多 PDF 批次匯入</p>
@@ -89,13 +90,13 @@ input[type=file]{max-width:100%;margin:10px 0}
 
 <div class="card">
 <h3>📥 多份 PDF 批次匯入</h3>
-<p>可以一次選取多個 PDF，系統會逐一辨識並整合成一份新題庫。</p>
+<p>一次選取多個 PDF，系統會逐一辨識並整合成一份新題庫。</p>
 
 <div class="notice">
 <b>匯入規則</b>
 <ul>
 <li>每份 PDF 的檔名會成為章節名稱。</li>
-<li>題目需要有 A、B、C、D 四個選項及 ANSWER 答案，才會匯入。</li>
+<li>需要有 A、B、C、D 四個選項及 ANSWER 答案。</li>
 <li>不符合選擇題格式的題目會略過。</li>
 <li>確認匯入後，會取代原本題庫。</li>
 </ul>
@@ -116,7 +117,7 @@ input[type=file]{max-width:100%;margin:10px 0}
 
 <div class="card">
 <h3>📄 匯入 JSON 題庫</h3>
-<p class="muted">仍然保留原本 JSON 匯入功能。</p>
+<p class="muted">保留原本 JSON 匯入功能。</p>
 <input type="file" id="jsonFile" accept=".json">
 <br>
 <button onclick="importJSON()">匯入 JSON</button>
@@ -142,7 +143,7 @@ let pdfSummaries=[];
 document.getElementById("pdfFiles").addEventListener("change",function(){
   let files=this.files;
   document.getElementById("fileCount").textContent=
-    files.length ? "已選擇 "+files.length+" 個 PDF 檔案" : "尚未選擇檔案";
+    files.length?"已選擇 "+files.length+" 個 PDF 檔案":"尚未選擇檔案";
 
   pendingPDFQuestions=[];
   pdfSummaries=[];
@@ -160,11 +161,7 @@ function save(){
 
 function escapeHTML(value){
   return String(value).replace(/[&<>"']/g,c=>({
-    "&":"&amp;",
-    "<":"&lt;",
-    ">":"&gt;",
-    '"':"&quot;",
-    "'":"&#39;"
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
   })[c]);
 }
 
@@ -187,7 +184,6 @@ function update(){
     ).join("");
 }
 
-/* 開始測驗 */
 function start(onlyWrong=false){
   let selected=bank.filter(q=>
     (!onlyWrong||wrong.includes(String(q.id)))&&
@@ -212,7 +208,6 @@ function start(onlyWrong=false){
   document.getElementById("home").classList.add("hidden");
   document.getElementById("quiz").classList.remove("hidden");
   document.getElementById("result").classList.add("hidden");
-
   show();
 }
 
@@ -293,6 +288,7 @@ function next(){
   }
 }
 
+/* 考後檢討：答對綠色、答錯或未作答紅色 */
 function finish(){
   let right=questions.filter(q=>answers[q.id]===q.answer).length;
 
@@ -302,14 +298,28 @@ function finish(){
   document.getElementById("score").textContent=
     `答對 ${right} 題，答錯 ${questions.length-right} 題，正確率 ${Math.round(right/questions.length*100)}%`;
 
-  document.getElementById("review").innerHTML=questions.map((q,i)=>`
-    <hr>
-    <p><b>${i+1}. ${escapeHTML(q.question)}</b></p>
-    <p>章節：${escapeHTML(q.chapter)}</p>
-    <p>你的答案：${escapeHTML((answers[q.id]||"未作答").toUpperCase())}
-    ｜正確答案：${escapeHTML(q.answer.toUpperCase())}</p>
-    <p>${escapeHTML(q.explanation||"暫無解析")}</p>
-  `).join("");
+  document.getElementById("review").innerHTML=questions.map((q,i)=>{
+    let userAnswer=answers[q.id];
+    let isCorrect=userAnswer===q.answer;
+
+    return `
+      <div class="review-item ${isCorrect?"review-correct":"review-wrong"}">
+        <div class="review-status">
+          ${isCorrect?"✓ 答對":"✗ 答錯"}
+        </div>
+
+        <p><b>${i+1}. ${escapeHTML(q.question)}</b></p>
+        <p>章節：${escapeHTML(q.chapter||"未分類")}</p>
+        <p>你的答案：
+          <b>${escapeHTML(userAnswer?userAnswer.toUpperCase():"未作答")}</b>
+        </p>
+        <p>正確答案：
+          <b>${escapeHTML(q.answer.toUpperCase())}</b>
+        </p>
+        <p>解析：${escapeHTML(q.explanation||"暫無解析")}</p>
+      </div>
+    `;
+  }).join("");
 }
 
 function goHome(){
@@ -325,7 +335,6 @@ function clearWrong(){
   }
 }
 
-/* JSON 匯入 */
 function importJSON(){
   let file=document.getElementById("jsonFile").files[0];
 
@@ -337,9 +346,7 @@ function importJSON(){
   file.text().then(text=>{
     let data=JSON.parse(text);
 
-    if(!Array.isArray(data)){
-      throw Error("題庫格式必須是陣列");
-    }
+    if(!Array.isArray(data))throw Error("題庫格式必須是陣列");
 
     data.forEach((q,i)=>{
       if(!q.question||!q.options||!q.answer||!(q.answer in q.options)){
@@ -352,7 +359,6 @@ function importJSON(){
     wrong=[];
     save();
     update();
-
     alert("成功匯入 "+bank.length+" 題！");
   }).catch(e=>{
     alert("匯入失敗："+e.message);
@@ -366,7 +372,6 @@ async function extractPDFLines(file){
   }
 
   let buffer=await file.arrayBuffer();
-
   let pdf=await pdfjsLib.getDocument({
     data:new Uint8Array(buffer)
   }).promise;
@@ -426,7 +431,6 @@ function parseQuestions(lines,chapter,prefix){
     let line=original.replace(/\s+/g," ").trim();
     if(!line)continue;
 
-    // 擷取 ANSWER
     let answerMatch=line.match(/ANSWER\s*:\s*([a-d])\b/i);
 
     if(answerMatch&&current){
@@ -434,12 +438,10 @@ function parseQuestions(lines,chapter,prefix){
       line=line.replace(/ANSWER\s*:\s*[a-d]\b/i,"").trim();
     }
 
-    // 跳過常見頁首頁尾
     if(/^(Name:|Class:|Date:|Copyright Cengage|Powered by Cognero|Page \d+|Multiple Choice)/i.test(line)){
       continue;
     }
 
-    // 判斷新題目
     let qMatch=line.match(/^(\d{1,3})\.\s*(.*)$/);
 
     if(qMatch){
@@ -454,14 +456,12 @@ function parseQuestions(lines,chapter,prefix){
 
       parsed[number]=current;
       currentOption=null;
-
       addText("question",qMatch[2]);
       continue;
     }
 
     if(!current)continue;
 
-    // 判斷選項
     let optionMatch=line.match(/^([a-d])\.\s*(.*)$/i);
 
     if(optionMatch){
@@ -470,7 +470,6 @@ function parseQuestions(lines,chapter,prefix){
       continue;
     }
 
-    // 接續前一行內容
     if(currentOption){
       addText(currentOption,line);
     }else{
@@ -480,12 +479,10 @@ function parseQuestions(lines,chapter,prefix){
 
   let result=[];
   let problems=[];
-
   let numbers=Object.keys(parsed).map(Number).sort((a,b)=>a-b);
 
   for(let number of numbers){
     let q=parsed[number];
-
     q.question=q.question.trim();
 
     for(let key of ["a","b","c","d"]){
@@ -494,8 +491,7 @@ function parseQuestions(lines,chapter,prefix){
 
     let missing=Object.keys(q.options).filter(k=>!q.options[k]);
 
-    if(!q.question||missing.length||!q.answer||
-       !(q.answer in q.options)){
+    if(!q.question||missing.length||!q.answer||!(q.answer in q.options)){
       problems.push(
         "第 "+number+" 題未完整辨識"+
         (missing.length?"（缺少選項 "+missing.join(",")+"）":"")+
@@ -552,7 +548,6 @@ async function readPDFs(){
         `正在讀取第 ${i+1}/${files.length} 份 PDF：${file.name}`;
 
       let lines=await extractPDFLines(file);
-
       let chapter=file.name.replace(/\.pdf$/i,"");
       let prefix="pdf"+(i+1);
 
@@ -650,8 +645,6 @@ function confirmPDFImport(){
   if(!confirm(message))return;
 
   bank=pendingPDFQuestions;
-
-  // 舊題庫的錯題 ID 不再適用，清除舊錯題紀錄
   wrong=[];
 
   save();
@@ -674,6 +667,5 @@ function confirmPDFImport(){
 
 update();
 </script>
-
 </body>
 </html>
