@@ -18,22 +18,23 @@ button{background:#465bd8;color:white}
 button:disabled{opacity:.5;cursor:not-allowed}
 .option{display:block;width:100%;text-align:left;background:#f1f3fa;color:#202944;margin:10px 0}
 .option.selected{background:#dce3ff;border:2px solid #465bd8}
+#feedback{padding:15px;background:#f0f3fa;border-radius:10px;margin-top:15px}
+.hidden{display:none}
+.muted{color:#788198}
+.notice{padding:12px;background:#f0f3fa;border-radius:9px;margin:12px 0}
+input[type=file]{max-width:100%;margin:10px 0}
+#preview{max-height:450px;overflow:auto}
+#preview li{margin:12px 0;line-height:1.6}
 .correct{background:#d8f5e6!important}
 .wrong{background:#ffe0e3!important}
-.muted{color:#788198}
-.hidden{display:none}
-#feedback{padding:15px;background:#f0f3fa;border-radius:10px;margin-top:15px}
-input[type=file]{max-width:100%;margin:10px 0}
-.notice{padding:12px;background:#f0f3fa;border-radius:9px;margin:12px 0}
-#preview{max-height:300px;overflow:auto}
-#preview li{margin:7px 0}
 </style>
 </head>
 
 <body>
+
 <header>
 <h1>📚 統計學題庫練習系統</h1>
-<p>隨機測驗・即時批改・錯題複習・PDF 匯入</p>
+<p>隨機測驗・即時批改・錯題複習・多 PDF 批次匯入</p>
 </header>
 
 <main>
@@ -69,6 +70,7 @@ input[type=file]{max-width:100%;margin:10px 0}
 
 <div class="card hidden" id="quiz">
 <p id="progress"></p>
+<p id="questionChapter" class="muted"></p>
 <h3 id="question"></h3>
 <div id="options"></div>
 <div id="feedback" class="hidden"></div>
@@ -86,19 +88,35 @@ input[type=file]{max-width:100%;margin:10px 0}
 </div>
 
 <div class="card">
-<h3>📥 匯入 PDF 題庫</h3>
-<p class="muted">選擇包含題目、選項及 ANSWER 答案的 PDF 檔案。</p>
-<input type="file" id="pdfFile" accept=".pdf,application/pdf">
-<br>
-<button id="pdfButton" onclick="readPDF()">讀取 PDF</button>
+<h3>📥 多份 PDF 批次匯入</h3>
+<p>可以一次選取多個 PDF，系統會逐一辨識並整合成一份新題庫。</p>
+
+<div class="notice">
+<b>匯入規則</b>
+<ul>
+<li>每份 PDF 的檔名會成為章節名稱。</li>
+<li>題目需要有 A、B、C、D 四個選項及 ANSWER 答案，才會匯入。</li>
+<li>不符合選擇題格式的題目會略過。</li>
+<li>確認匯入後，會取代原本題庫。</li>
+</ul>
+</div>
+
+<input type="file" id="pdfFiles" accept=".pdf,application/pdf" multiple>
+<p id="fileCount" class="muted">尚未選擇檔案</p>
+
+<button id="pdfButton" onclick="readPDFs()">開始批次讀取</button>
+
 <div id="pdfStatus" class="notice hidden"></div>
 <div id="preview" class="hidden"></div>
-<button id="confirmPDF" class="hidden" onclick="confirmPDFImport()">確認匯入辨識結果</button>
+
+<button id="confirmPDF" class="hidden" onclick="confirmPDFImport()">
+確認匯入全部題目
+</button>
 </div>
 
 <div class="card">
 <h3>📄 匯入 JSON 題庫</h3>
-<p class="muted">原本的 JSON 匯入功能仍然保留。</p>
+<p class="muted">仍然保留原本 JSON 匯入功能。</p>
 <input type="file" id="jsonFile" accept=".json">
 <br>
 <button onclick="importJSON()">匯入 JSON</button>
@@ -119,6 +137,19 @@ let correct=Number(localStorage.getItem("correct")||0);
 
 let questions=[],index=0,answers={},done={};
 let pendingPDFQuestions=[];
+let pdfSummaries=[];
+
+document.getElementById("pdfFiles").addEventListener("change",function(){
+  let files=this.files;
+  document.getElementById("fileCount").textContent=
+    files.length ? "已選擇 "+files.length+" 個 PDF 檔案" : "尚未選擇檔案";
+
+  pendingPDFQuestions=[];
+  pdfSummaries=[];
+  document.getElementById("preview").classList.add("hidden");
+  document.getElementById("confirmPDF").classList.add("hidden");
+  document.getElementById("pdfStatus").classList.add("hidden");
+});
 
 function save(){
   localStorage.setItem("bank",JSON.stringify(bank));
@@ -127,25 +158,36 @@ function save(){
   localStorage.setItem("correct",correct);
 }
 
+function escapeHTML(value){
+  return String(value).replace(/[&<>"']/g,c=>({
+    "&":"&amp;",
+    "<":"&lt;",
+    ">":"&gt;",
+    '"':"&quot;",
+    "'":"&#39;"
+  })[c]);
+}
+
 function update(){
-  document.getElementById("info").textContent="目前共有 "+bank.length+" 題";
+  document.getElementById("info").textContent=
+    "目前共有 "+bank.length+" 題，分布於 "+
+    new Set(bank.map(q=>q.chapter)).size+" 個章節";
+
   document.getElementById("total").textContent=total;
   document.getElementById("correct").textContent=correct;
   document.getElementById("rate").textContent=
     total?Math.round(correct/total*100)+"%":"0%";
 
   let chapters=[...new Set(bank.map(q=>q.chapter||"未分類"))];
+
   document.getElementById("chapter").innerHTML=
     '<option value="all">全部章節</option>'+
-    chapters.map(c=>`<option value="${escapeHTML(c)}">${escapeHTML(c)}</option>`).join("");
+    chapters.map(c=>
+      `<option value="${escapeHTML(c)}">${escapeHTML(c)}</option>`
+    ).join("");
 }
 
-function escapeHTML(value){
-  return String(value).replace(/[&<>"']/g,c=>({
-    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
-  })[c]);
-}
-
+/* 開始測驗 */
 function start(onlyWrong=false){
   let selected=bank.filter(q=>
     (!onlyWrong||wrong.includes(String(q.id)))&&
@@ -159,8 +201,9 @@ function start(onlyWrong=false){
   }
 
   selected.sort(()=>Math.random()-.5);
-  let n=document.getElementById("amount").value;
-  questions=selected.slice(0,n==="all"?selected.length:Number(n));
+
+  let amount=document.getElementById("amount").value;
+  questions=selected.slice(0,amount==="all"?selected.length:Number(amount));
 
   index=0;
   answers={};
@@ -169,6 +212,7 @@ function start(onlyWrong=false){
   document.getElementById("home").classList.add("hidden");
   document.getElementById("quiz").classList.remove("hidden");
   document.getElementById("result").classList.add("hidden");
+
   show();
 }
 
@@ -178,23 +222,27 @@ function show(){
   document.getElementById("progress").textContent=
     `第 ${index+1} 題 / 共 ${questions.length} 題`;
 
+  document.getElementById("questionChapter").textContent=q.chapter||"未分類";
   document.getElementById("question").textContent=q.question;
   document.getElementById("options").innerHTML="";
 
   for(let [key,value] of Object.entries(q.options)){
     let b=document.createElement("button");
     b.className="option"+(answers[q.id]===key?" selected":"");
-    b.textContent=key+". "+value;
+    b.textContent=key.toUpperCase()+". "+value;
     b.disabled=!!done[q.id];
+
     b.onclick=()=>{
       if(done[q.id])return;
       answers[q.id]=key;
       show();
     };
+
     document.getElementById("options").appendChild(b);
   }
 
   document.getElementById("feedback").classList.add("hidden");
+
   if(done[q.id])showFeedback(q);
 }
 
@@ -205,6 +253,7 @@ function check(){
     alert("請先選擇答案！");
     return;
   }
+
   if(done[q.id])return;
 
   done[q.id]=true;
@@ -231,7 +280,7 @@ function showFeedback(q){
 
   f.classList.remove("hidden");
   f.innerHTML=
-    `<b>${ok?"答對了！":"答錯了！正確答案："+escapeHTML(q.answer)}</b>
+    `<b>${ok?"答對了！":"答錯了！正確答案："+escapeHTML(q.answer.toUpperCase())}</b>
     <p>${escapeHTML(q.explanation||"暫無解析")}</p>`;
 }
 
@@ -256,7 +305,9 @@ function finish(){
   document.getElementById("review").innerHTML=questions.map((q,i)=>`
     <hr>
     <p><b>${i+1}. ${escapeHTML(q.question)}</b></p>
-    <p>你的答案：${escapeHTML(answers[q.id]||"未作答")}｜正確答案：${escapeHTML(q.answer)}</p>
+    <p>章節：${escapeHTML(q.chapter)}</p>
+    <p>你的答案：${escapeHTML((answers[q.id]||"未作答").toUpperCase())}
+    ｜正確答案：${escapeHTML(q.answer.toUpperCase())}</p>
     <p>${escapeHTML(q.explanation||"暫無解析")}</p>
   `).join("");
 }
@@ -274,8 +325,10 @@ function clearWrong(){
   }
 }
 
+/* JSON 匯入 */
 function importJSON(){
   let file=document.getElementById("jsonFile").files[0];
+
   if(!file){
     alert("請先選擇 JSON 檔案！");
     return;
@@ -283,7 +336,10 @@ function importJSON(){
 
   file.text().then(text=>{
     let data=JSON.parse(text);
-    if(!Array.isArray(data))throw Error("題庫格式必須是陣列");
+
+    if(!Array.isArray(data)){
+      throw Error("題庫格式必須是陣列");
+    }
 
     data.forEach((q,i)=>{
       if(!q.question||!q.options||!q.answer||!(q.answer in q.options)){
@@ -293,21 +349,24 @@ function importJSON(){
     });
 
     bank=data;
+    wrong=[];
     save();
     update();
+
     alert("成功匯入 "+bank.length+" 題！");
   }).catch(e=>{
     alert("匯入失敗："+e.message);
   });
 }
 
-/* PDF 文字擷取：依照頁面座標整理成文字行 */
+/* PDF 文字擷取 */
 async function extractPDFLines(file){
   if(!window.pdfjsLib){
     throw new Error("PDF 讀取程式載入失敗，請重新整理網頁後再試。");
   }
 
   let buffer=await file.arrayBuffer();
+
   let pdf=await pdfjsLib.getDocument({
     data:new Uint8Array(buffer)
   }).promise;
@@ -347,14 +406,15 @@ async function extractPDFLines(file){
   return allLines;
 }
 
-/* 將題目、選項與 ANSWER 組合成題庫格式 */
-function parseQuestions(lines){
+/* 解析單份 PDF */
+function parseQuestions(lines,chapter,prefix){
   let parsed={};
   let current=null;
   let currentOption=null;
 
   function addText(target,text){
     if(!text)return;
+
     if(target==="question"){
       current.question+=" "+text;
     }else if(target){
@@ -366,46 +426,42 @@ function parseQuestions(lines){
     let line=original.replace(/\s+/g," ").trim();
     if(!line)continue;
 
-    line=line.replace(/^ANSWER\s*:\s*/i,"ANSWER: ");
-
-    // 擷取答案，即使答案與選項出現在同一行
+    // 擷取 ANSWER
     let answerMatch=line.match(/ANSWER\s*:\s*([a-d])\b/i);
+
     if(answerMatch&&current){
       current.answer=answerMatch[1].toLowerCase();
       line=line.replace(/ANSWER\s*:\s*[a-d]\b/i,"").trim();
     }
 
-    // 跳過 PDF 頁首頁尾
+    // 跳過常見頁首頁尾
     if(/^(Name:|Class:|Date:|Copyright Cengage|Powered by Cognero|Page \d+|Multiple Choice)/i.test(line)){
       continue;
     }
 
-    // 新題目，例如 1. Question text
+    // 判斷新題目
     let qMatch=line.match(/^(\d{1,3})\.\s*(.*)$/);
 
     if(qMatch){
       let number=Number(qMatch[1]);
 
-      if(number>=1&&number<=84){
-        current=parsed[number]||{
-          number:number,
-          question:"",
-          options:{a:"",b:"",c:"",d:""},
-          answer:""
-        };
-        parsed[number]=current;
-        currentOption=null;
-        addText("question",qMatch[2]);
-      }else{
-        current=null;
-        currentOption=null;
-      }
+      current=parsed[number]||{
+        number:number,
+        question:"",
+        options:{a:"",b:"",c:"",d:""},
+        answer:""
+      };
+
+      parsed[number]=current;
+      currentOption=null;
+
+      addText("question",qMatch[2]);
       continue;
     }
 
     if(!current)continue;
 
-    // 選項，例如 a. xxx
+    // 判斷選項
     let optionMatch=line.match(/^([a-d])\.\s*(.*)$/i);
 
     if(optionMatch){
@@ -414,7 +470,7 @@ function parseQuestions(lines){
       continue;
     }
 
-    // 其他文字視為上一行題目或選項的延續
+    // 接續前一行內容
     if(currentOption){
       addText(currentOption,line);
     }else{
@@ -425,13 +481,10 @@ function parseQuestions(lines){
   let result=[];
   let problems=[];
 
-  for(let i=1;i<=84;i++){
-    let q=parsed[i];
+  let numbers=Object.keys(parsed).map(Number).sort((a,b)=>a-b);
 
-    if(!q){
-      problems.push("第 "+i+" 題未辨識");
-      continue;
-    }
+  for(let number of numbers){
+    let q=parsed[number];
 
     q.question=q.question.trim();
 
@@ -441,9 +494,10 @@ function parseQuestions(lines){
 
     let missing=Object.keys(q.options).filter(k=>!q.options[k]);
 
-    if(!q.question||missing.length||!q.answer||!(q.answer in q.options)){
+    if(!q.question||missing.length||!q.answer||
+       !(q.answer in q.options)){
       problems.push(
-        "第 "+i+" 題資料不完整"+
+        "第 "+number+" 題未完整辨識"+
         (missing.length?"（缺少選項 "+missing.join(",")+"）":"")+
         (!q.answer?"（缺少答案）":"")
       );
@@ -451,8 +505,8 @@ function parseQuestions(lines){
     }
 
     result.push({
-      id:"ch1-"+i,
-      chapter:"Ch. 01: Data and Statistics",
+      id:prefix+"-q"+number,
+      chapter:chapter,
       question:q.question,
       options:q.options,
       answer:q.answer,
@@ -460,15 +514,19 @@ function parseQuestions(lines){
     });
   }
 
-  return {questions:result,problems:problems};
+  return {
+    questions:result,
+    problems:problems,
+    detected:numbers.length
+  };
 }
 
-/* 選擇 PDF 並顯示辨識預覽 */
-async function readPDF(){
-  let file=document.getElementById("pdfFile").files[0];
+/* 多份 PDF 批次讀取 */
+async function readPDFs(){
+  let files=Array.from(document.getElementById("pdfFiles").files);
 
-  if(!file){
-    alert("請先選擇 PDF 檔案！");
+  if(!files.length){
+    alert("請先選擇至少一份 PDF！");
     return;
   }
 
@@ -478,83 +536,144 @@ async function readPDF(){
   let confirmButton=document.getElementById("confirmPDF");
 
   button.disabled=true;
-  button.textContent="讀取中...";
+  button.textContent="批次讀取中...";
   status.classList.remove("hidden");
   preview.classList.add("hidden");
   confirmButton.classList.add("hidden");
+
   pendingPDFQuestions=[];
+  pdfSummaries=[];
 
   try{
-    let lines=await extractPDFLines(file);
-    let result=parseQuestions(lines);
+    for(let i=0;i<files.length;i++){
+      let file=files[i];
 
-    pendingPDFQuestions=result.questions;
+      status.textContent=
+        `正在讀取第 ${i+1}/${files.length} 份 PDF：${file.name}`;
 
-    status.innerHTML=
-      `PDF 讀取完成！<br>
-      成功辨識：<b>${result.questions.length} 題</b><br>
-      預計選擇題：84 題<br>
-      尚未支援的簡答題：13 題`;
+      let lines=await extractPDFLines(file);
 
-    if(result.problems.length){
-      status.innerHTML+=
-        `<p>以下題目尚未完整辨識，暫時不會匯入：</p>
-        <ul>${result.problems.map(x=>`<li>${escapeHTML(x)}</li>`).join("")}</ul>`;
+      let chapter=file.name.replace(/\.pdf$/i,"");
+      let prefix="pdf"+(i+1);
+
+      let result=parseQuestions(lines,chapter,prefix);
+
+      pendingPDFQuestions.push(...result.questions);
+
+      pdfSummaries.push({
+        name:file.name,
+        chapter:chapter,
+        count:result.questions.length,
+        detected:result.detected,
+        problems:result.problems
+      });
     }
 
-    preview.classList.remove("hidden");
-    preview.innerHTML="<h4>辨識結果預覽</h4><ol>"+
-      result.questions.slice(0,10).map(q=>
-        `<li><b>${escapeHTML(q.question)}</b><br>
-        A. ${escapeHTML(q.options.a)}<br>
-        B. ${escapeHTML(q.options.b)}<br>
-        C. ${escapeHTML(q.options.c)}<br>
-        D. ${escapeHTML(q.options.d)}<br>
-        正確答案：${escapeHTML(q.answer.toUpperCase())}</li>`
-      ).join("")+"</ol>"+
-      (result.questions.length>10?"<p>以上僅顯示前 10 題。</p>":"");
+    let totalQuestions=pendingPDFQuestions.length;
 
-    if(result.questions.length){
+    status.innerHTML=
+      `<b>批次讀取完成！</b><br>
+      選取檔案：${files.length} 份<br>
+      成功辨識：${totalQuestions} 題`;
+
+    status.innerHTML+=
+      "<hr><b>各檔案辨識結果：</b><ul>"+
+      pdfSummaries.map(s=>
+        `<li>${escapeHTML(s.name)}：
+        成功 ${s.count} 題／辨識到 ${s.detected} 個題號
+        ${s.problems.length?
+          `<br><span style="color:#bd3845">有 ${s.problems.length} 題未完整辨識</span>`:
+          ""}
+        </li>`
+      ).join("")+"</ul>";
+
+    preview.classList.remove("hidden");
+
+    preview.innerHTML=
+      "<h3>題目預覽（每份 PDF 最多顯示前 3 題）</h3>"+
+      pdfSummaries.map(s=>{
+        let sample=pendingPDFQuestions
+          .filter(q=>q.chapter===s.chapter)
+          .slice(0,3);
+
+        return `
+          <hr>
+          <h4>${escapeHTML(s.chapter)}（${s.count} 題）</h4>
+          <ol>
+          ${sample.map(q=>`
+            <li>
+              <b>${escapeHTML(q.question)}</b><br>
+              A. ${escapeHTML(q.options.a)}<br>
+              B. ${escapeHTML(q.options.b)}<br>
+              C. ${escapeHTML(q.options.c)}<br>
+              D. ${escapeHTML(q.options.d)}<br>
+              正確答案：${escapeHTML(q.answer.toUpperCase())}
+            </li>
+          `).join("")}
+          </ol>
+        `;
+      }).join("");
+
+    if(totalQuestions>0){
       confirmButton.classList.remove("hidden");
-      confirmButton.textContent="確認匯入 "+result.questions.length+" 題";
+      confirmButton.textContent="確認匯入全部 "+totalQuestions+" 題";
     }else{
-      status.innerHTML+="<p>沒有辨識到可匯入的完整題目，請檢查 PDF 格式。</p>";
+      status.innerHTML+="<p>沒有辨識到完整的選擇題，請檢查 PDF 格式。</p>";
     }
 
   }catch(error){
-    status.textContent="PDF 讀取失敗："+error.message;
+    status.innerHTML=
+      `<b>讀取過程發生錯誤：</b><br>${escapeHTML(error.message)}<br>
+      請檢查 PDF 是否正常，並重新嘗試。`;
+
+    pendingPDFQuestions=[];
+    pdfSummaries=[];
   }finally{
     button.disabled=false;
-    button.textContent="讀取 PDF";
+    button.textContent="開始批次讀取";
   }
 }
 
-/* 確認後才正式寫入題庫 */
+/* 確認匯入：取代舊題庫 */
 function confirmPDFImport(){
   if(!pendingPDFQuestions.length){
     alert("目前沒有可匯入的題目！");
     return;
   }
 
-  if(!confirm(
-    "確定匯入 "+pendingPDFQuestions.length+
-    " 題嗎？這會取代目前的題庫，但不會清除累計統計。"
-  )){
-    return;
-  }
+  let message=
+    "確定以這批 PDF 取代原本題庫嗎？\n\n"+
+    "PDF 檔案數："+pdfSummaries.length+"\n"+
+    "新題庫題數："+pendingPDFQuestions.length+"\n\n"+
+    "原本題庫的題目將被取代。";
+
+  if(!confirm(message))return;
 
   bank=pendingPDFQuestions;
-  wrong=wrong.filter(id=>bank.some(q=>String(q.id)===id));
+
+  // 舊題庫的錯題 ID 不再適用，清除舊錯題紀錄
+  wrong=[];
 
   save();
   update();
 
-  alert("成功匯入 "+bank.length+" 題！");
+  alert(
+    "成功匯入 "+bank.length+
+    " 題！共 "+pdfSummaries.length+" 個章節。"
+  );
+
+  pendingPDFQuestions=[];
+  pdfSummaries=[];
+
   document.getElementById("preview").classList.add("hidden");
   document.getElementById("confirmPDF").classList.add("hidden");
+  document.getElementById("pdfStatus").classList.add("hidden");
+  document.getElementById("pdfFiles").value="";
+  document.getElementById("fileCount").textContent="尚未選擇檔案";
 }
 
 update();
 </script>
+
 </body>
 </html>
